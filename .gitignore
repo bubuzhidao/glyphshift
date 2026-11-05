@@ -34,3 +34,7 @@ apps/glyphshift-desktop/src-tauri/gen
 
 # Miscellaneous generated files
 *.tmp
+*.zip
+
+# Local test records and packaged snapshots
+/测试记录/
