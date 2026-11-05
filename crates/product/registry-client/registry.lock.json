@@ -1,0 +1,10 @@
+{
+  "schema": "glyphshift.registry-consumer-contract/1",
+  "repository": "https://github.com/glyphshift/registry",
+  "commit": "e19793249e82ad5de5dc0084f9a6c5b0a40fc886",
+  "apiVersion": "0.4.0",
+  "proofSchema": "glyphshift.release-proof/1",
+  "statementSchema": "glyphshift.release-statement/1",
+  "trustSchema": "glyphshift.release-trust/1",
+  "note": "Cross-runtime CI fixture source only; production reads the explicitly configured HTTPS API and pins keys independently. No adjacent-source runtime dependency."
+}

@@ -1,0 +1,374 @@
+import { expect, test, type Page } from '@playwright/test'
+import { model, replaceModel, storageKey } from './fixtures/productModel'
+
+async function visibleHeadingLevels(page: Page) {
+  return page.locator('h1, h2, h3, h4, h5, h6').evaluateAll(elements => elements
+    .filter((element) => {
+      const html = element as HTMLElement
+      const style = getComputedStyle(html)
+      return html.getClientRects().length > 0 && style.display !== 'none' && style.visibility !== 'hidden'
+    })
+    .map(element => ({
+      level: Number(element.tagName.slice(1)),
+      text: element.textContent?.trim() ?? '',
+    })))
+}
+
+function expectNoHeadingJumps(headings: Array<{ level: number; text: string }>) {
+  expect(headings[0]?.level).toBe(1)
+  for (let index = 1; index < headings.length; index += 1) {
+    expect(headings[index]!.level, `heading jump before “${headings[index]!.text}”: ${JSON.stringify(headings)}`)
+      .toBeLessThanOrEqual(headings[index - 1]!.level + 1)
+  }
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), { key: storageKey, value: model })
+  await page.goto('/')
+})
+
+test('compact workflow table gives workflow identity the remaining width and keeps status bounded', async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 640 })
+
+  const table = page.getByTestId('workflow-management-table')
+  const row = table.getByRole('row').filter({ hasText: '默认创作工作流' })
+  const identity = row.locator('.management-table-identity-cell')
+  const status = row.locator('td').nth(4)
+  const actions = row.locator('.management-table-actions-cell')
+
+  await expect(table).toBeVisible()
+  await expect(identity).toBeVisible()
+  await expect(actions).toBeVisible()
+  await expect.poll(() => table.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+  await expect.poll(async () => {
+    const tableBox = await table.boundingBox()
+    const identityBox = await identity.boundingBox()
+    const statusBox = await status.boundingBox()
+    const actionsBox = await actions.boundingBox()
+    if (!tableBox || !identityBox || !statusBox || !actionsBox) return false
+    return identityBox.x >= tableBox.x
+      && identityBox.x + identityBox.width <= tableBox.x + tableBox.width
+      && statusBox.x >= tableBox.x
+      && statusBox.x + statusBox.width <= tableBox.x + tableBox.width
+      && actionsBox.x >= tableBox.x
+      && actionsBox.x + actionsBox.width <= tableBox.x + tableBox.width
+  }).toBe(true)
+
+  await table.focus()
+  await expect(table).toBeFocused()
+  const moreActions = actions.getByRole('button', { name: '更多操作：默认创作工作流' })
+  await moreActions.click()
+  await expect(page.getByRole('menuitem', { name: '复制', exact: true })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: '删除', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(moreActions).toBeFocused()
+})
+
+test('shell offers a discoverable main-content shortcut and named toolbars', async ({ page }) => {
+  const skipLink = page.getByRole('link', { name: /跳到主要内容/ })
+  const main = page.getByRole('main', { name: '主要内容' })
+
+  await page.keyboard.press('Tab')
+  await expect(skipLink).toBeFocused()
+  await expect(skipLink).toBeVisible()
+  await page.keyboard.press('Enter')
+  await expect(main).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect.poll(() => main.evaluate(element => element.contains(document.activeElement))).toBe(true)
+
+  await page.getByRole('button', { name: '切换到浅色主题' }).focus()
+  await page.keyboard.press('Alt+m')
+  await expect(main).toBeFocused()
+  await expect(page.getByRole('toolbar', { name: '工作流页面操作' })).toBeVisible()
+  await expect(page.getByRole('toolbar', { name: '列表工具栏' })).toBeVisible()
+
+  await page.getByRole('checkbox', { name: '选择 默认创作工作流' }).click()
+  await expect(page.getByRole('toolbar', { name: '批量操作' })).toBeVisible()
+})
+
+test('workflow sections and Help keep a continuous visible heading outline', async ({ page }) => {
+  await page.getByRole('button', { name: '编辑 默认创作工作流' }).click()
+  await expect(page.getByTestId('workflow-editor')).toBeVisible()
+  expectNoHeadingJumps(await visibleHeadingLevels(page))
+
+  for (const tab of ['设置软件', '基础配置', '翻译字典', '字体策略']) {
+    await page.getByRole('tab', { name: tab }).click()
+    expectNoHeadingJumps(await visibleHeadingLevels(page))
+  }
+
+  await page.getByRole('button', { name: '帮助' }).click()
+  expectNoHeadingJumps(await visibleHeadingLevels(page))
+})
+
+test('functional copy follows the semantic desktop type ramp', async ({ page }) => {
+  const typeRamp = await page.evaluate(() => {
+    const style = getComputedStyle(document.documentElement)
+    return {
+      caption: style.getPropertyValue('--type-caption').trim(),
+      label: style.getPropertyValue('--type-label').trim(),
+      metadata: style.getPropertyValue('--type-metadata').trim(),
+      body: style.getPropertyValue('--type-body').trim(),
+      sectionTitle: style.getPropertyValue('--type-section-title').trim(),
+      pageTitle: style.getPropertyValue('--type-page-title').trim(),
+    }
+  })
+
+  expect(typeRamp).toEqual({
+    caption: '10px',
+    label: '11px',
+    metadata: '11px',
+    body: '12px',
+    sectionTitle: '13px',
+    pageTitle: '20px',
+  })
+
+  await expect(page.getByText('为每个软件组合适配器、有序词典和字体设置，并持续应用翻译。')).toHaveCount(0)
+  const metadata = page.getByText('1 种适配器', { exact: true }).first()
+  await expect(metadata).toBeVisible()
+  await expect.poll(() => metadata.evaluate(element => getComputedStyle(element).fontSize)).toBe('11px')
+})
+
+test('management table body stays continuous for empty and populated states', async ({ page }) => {
+  const emptyModel = JSON.parse(JSON.stringify(model))
+  emptyModel.workflows = []
+  emptyModel.workflowDetails = {}
+  await replaceModel(page, emptyModel)
+
+  const tableBody = page.getByTestId('management-table-body')
+  const emptyState = tableBody.locator('[data-slot="empty"] > [data-slot="root"]')
+  await expect(page.getByText('还没有工作流')).toBeVisible()
+  await expect.poll(async () => {
+    const bodyBox = await tableBody.boundingBox()
+    const emptyBox = await emptyState.boundingBox()
+    if (!bodyBox || !emptyBox) return false
+    return Math.abs(emptyBox.y - (bodyBox.y + 32)) <= 1
+      && Math.abs((emptyBox.y + emptyBox.height) - (bodyBox.y + bodyBox.height)) <= 1
+  }).toBe(true)
+  await page.screenshot({ path: '../../local-test/evidence/desktop-screens/management-table-empty-continuous.png' })
+
+  await replaceModel(page, model)
+  const lastRow = page.getByTestId('management-table-body').locator('tbody > tr').last()
+  await expect(lastRow).toBeVisible()
+  await expect.poll(() => lastRow.evaluate(element => getComputedStyle(element).borderBottomWidth)).toBe('1px')
+  await page.screenshot({ path: '../../local-test/evidence/desktop-screens/management-table-populated-continuous.png' })
+})
+
+test('management tables share independent persisted column controls', async ({ page }) => {
+  const columnsButton = page.getByRole('button', { name: '显示列', exact: true })
+
+  await expect(columnsButton).toBeVisible()
+  await columnsButton.click()
+  await page.getByRole('menuitemcheckbox', { name: '软件', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('columnheader', { name: '软件', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: '字典', exact: true }).click()
+  await columnsButton.click()
+  await page.getByRole('menuitemcheckbox', { name: '发布', exact: true }).click()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('columnheader', { name: '发布', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: '工作流', exact: true }).click()
+  await expect(page.getByRole('columnheader', { name: '软件', exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('columnheader', { name: '软件', exact: true })).toHaveCount(0)
+})
+
+test('dictionary delete names every workflow record that blocks it', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  await page.addInitScript(({ current }) => {
+    const internals = {
+      invoke: async (command: string) => {
+        if (command === 'desktop_settings') return { settingsSchemaVersion: 1, safetyNoticeVersion: 1, onboardingVersion: 1, localePreference: 'zh-CN', themePreference: 'dark' }
+        if (command === 'desktop_status') return { shellReady: true, productVersion: '0.5.2', apiVersion: 38 }
+        if (command === 'desktop_snapshot') return current
+        if (command === 'desktop_delete_dictionaries') {
+          throw {
+            schemaVersion: 1,
+            code: 'dictionary.referenced',
+            args: {
+              workflowNames: ['默认创作工作流'],
+              probeNames: ['界面巡检探针'],
+            },
+          }
+        }
+        return null
+      },
+    }
+    ;(window as unknown as { __TAURI_INTERNALS__: typeof internals }).__TAURI_INTERNALS__ = internals
+  }, { current: snapshot })
+  await replaceModel(page, snapshot)
+
+  await page.getByRole('button', { name: '字典', exact: true }).click()
+  await page.getByRole('button', { name: '删除 界面基础词典' }).click()
+  await page.getByRole('dialog', { name: '删除字典' }).getByRole('button', { name: '删除字典' }).click()
+
+  const alert = page.getByRole('alert')
+  await expect(alert).toContainText('默认创作工作流')
+  await expect(alert).toContainText('界面巡检探针')
+})
+
+test('workflow names a stopped software and exposes its actionable Runtime error', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  snapshot.activations = [{ workflowId: 'workflow-proof', revision: 5 }]
+  snapshot.workflowRuntimeStatus = {
+    'workflow-proof': {
+      workflowId: 'workflow-proof',
+      targets: [{
+        softwareId: 'software-proof', discovered: false, active: false,
+        translationRequested: true, fontRequested: true,
+        translationActive: false, fontActive: false, appliedGeneration: null,
+      }],
+      errors: {
+        'software-proof': {
+          schemaVersion: 1,
+          code: 'runtime.target_not_found',
+          args: {},
+        },
+      },
+    },
+  }
+  await replaceModel(page, snapshot)
+
+  await expect(page.getByText('需要处理', { exact: true })).toHaveCount(0)
+  const stoppedStatus = page.getByRole('button', { name: '等待软件启动', exact: true })
+  await expect(stoppedStatus).toBeVisible()
+  await stoppedStatus.click()
+  const details = page.getByTestId('workflow-runtime-issues')
+  await expect(details.getByText('Vector Studio', { exact: true })).toBeVisible()
+  await expect(details.getByText('没有找到与该程序路径匹配的运行实例；请先启动这个版本的软件。')).toBeVisible()
+  await expect(details.getByRole('button', { name: '刷新状态', exact: true })).toBeVisible()
+  await page.screenshot({ path: '../../local-test/evidence/desktop-screens/workflow-runtime-stopped.png' })
+})
+
+test('workflow shows an explicit unsupported-adapter Runtime error', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  snapshot.activations = [{ workflowId: 'workflow-proof', revision: 5 }]
+  snapshot.workflowRuntimeStatus = {
+    'workflow-proof': {
+      workflowId: 'workflow-proof',
+      targets: [{
+        softwareId: 'software-proof', discovered: true, active: false,
+        translationRequested: true, fontRequested: true,
+        translationActive: false, fontActive: false, appliedGeneration: null,
+      }],
+      errors: {
+        'software-proof': {
+          schemaVersion: 1,
+          code: 'runtime.component_unsupported',
+          args: {},
+        },
+      },
+    },
+  }
+  await replaceModel(page, snapshot)
+
+  const failedStatus = page.getByRole('button', { name: '连接失败', exact: true })
+  await expect(failedStatus).toBeVisible()
+  await failedStatus.click()
+  const details = page.getByTestId('workflow-runtime-issues')
+  await expect(details).toContainText('当前适配器不支持这个目标或引擎版本')
+  await expect(details).not.toContainText('软件正在运行，但 Glyphshift 没能开始翻译')
+})
+
+test('workflow keeps a generic activation failure distinct from unsupported adapters', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  snapshot.activations = [{ workflowId: 'workflow-proof', revision: 5 }]
+  snapshot.workflowRuntimeStatus = {
+    'workflow-proof': {
+      workflowId: 'workflow-proof',
+      targets: [{
+        softwareId: 'software-proof', discovered: true, active: false,
+        translationRequested: true, fontRequested: true,
+        translationActive: false, fontActive: false, appliedGeneration: null,
+      }],
+      errors: {
+        'software-proof': {
+          schemaVersion: 1,
+          code: 'runtime.activation_failed',
+          args: {},
+        },
+      },
+    },
+  }
+  await replaceModel(page, snapshot)
+
+  const failedStatus = page.getByRole('button', { name: '连接失败', exact: true })
+  await expect(failedStatus).toBeVisible()
+  await failedStatus.click()
+  const details = page.getByTestId('workflow-runtime-issues')
+  await expect(details).toContainText('软件正在运行，但 Glyphshift 没能开始翻译')
+  await expect(details).not.toContainText('当前适配器不支持这个目标或引擎版本')
+})
+
+test('workflow does not label generic access failures as permission mismatches', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  snapshot.activations = [{ workflowId: 'workflow-proof', revision: 5 }]
+  snapshot.workflowRuntimeStatus = {
+    'workflow-proof': {
+      workflowId: 'workflow-proof',
+      targets: [{
+        softwareId: 'software-proof', discovered: true, active: false,
+        translationRequested: true, fontRequested: true,
+        translationActive: false, fontActive: false, appliedGeneration: null,
+      }],
+      errors: {
+        'software-proof': {
+          schemaVersion: 1,
+          code: 'runtime.target_access_failed',
+          args: {},
+        },
+      },
+    },
+  }
+  await replaceModel(page, snapshot)
+
+  const failedStatus = page.getByRole('button', { name: '连接失败', exact: true })
+  await expect(failedStatus).toBeVisible()
+  await failedStatus.click()
+  await expect(page.getByTestId('workflow-runtime-issues').getByText('无法写入目标软件。它可能已经退出，或正以管理员权限运行。请确认软件仍在运行；若权限更高，请在设置中开启“始终以管理员身份启动”。')).toBeVisible()
+})
+
+test('workflow identifies unavailable target processes without claiming a permission mismatch', async ({ page }) => {
+  const snapshot = JSON.parse(JSON.stringify(model))
+  snapshot.activations = [{ workflowId: 'workflow-proof', revision: 5 }]
+  snapshot.workflowRuntimeStatus = {
+    'workflow-proof': {
+      workflowId: 'workflow-proof',
+      targets: [{
+        softwareId: 'software-proof', discovered: true, active: false,
+        translationRequested: true, fontRequested: true,
+        translationActive: false, fontActive: false, appliedGeneration: null,
+      }],
+      errors: {
+        'software-proof': {
+          schemaVersion: 1,
+          code: 'runtime.target_access_failed',
+          args: { operation: 'targetProcess' },
+        },
+      },
+    },
+  }
+  await replaceModel(page, snapshot)
+
+  const failedStatus = page.getByRole('button', { name: '连接失败', exact: true })
+  await expect(failedStatus).toBeVisible()
+  await failedStatus.click()
+  await expect(page.getByTestId('workflow-runtime-issues')).not.toContainText('管理员权限不能')
+})
+
+test('navigation keeps fonts inside workflow targets instead of a separate asset page', async ({ page }) => {
+  await expect(page.getByRole('heading', { name: '工作流' })).toBeVisible()
+  await expect(page.getByText('1 种适配器', { exact: true })).toBeVisible()
+  await expect(page.getByText('桌面服务已连接')).toHaveCount(0)
+  await expect(page.getByText('本地预览')).toHaveCount(0)
+
+  await page.getByRole('button', { name: '字典', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '字典' })).toBeVisible()
+  await expect(page.getByText('en-US')).toBeVisible()
+  await expect(page.getByText('v1.2.0')).toBeVisible()
+
+  await expect(page.getByRole('button', { name: '字体', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: '工作流', exact: true }).click()
+  await expect(page.getByText('字体策略：Synthetic Sans')).toBeVisible()
+})

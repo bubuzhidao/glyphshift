@@ -1,0 +1,69 @@
+[workspace]
+members = [
+    "apps/glyphshift-desktop/src-tauri",
+    "apps/glyphshift-service",
+    "crates/adapters/platform/registry",
+    "crates/adapters/platform/package",
+    "crates/adapters/tools/devkit",
+    "crates/adapters/platform/native-abi",
+    "crates/adapters/platform/native-host",
+    "crates/adapters/platform/sdk",
+    "crates/runtime/controller/sdk",
+    "crates/runtime/controller/host",
+    "crates/runtime/controller/windows",
+    "crates/core/capture",
+    "crates/core/decision",
+    "crates/product/desktop-backend",
+    "crates/product/registry-client",
+    "crates/runtime/desktop",
+    "crates/dictionary/distribution",
+    "crates/dictionary/package",
+    "crates/dictionary/inspector",
+    "crates/core/domain",
+    "crates/core/extension",
+    "crates/runtime/worker/host",
+    "crates/runtime/worker/sdk",
+    "crates/runtime/worker/acquisition-host",
+    "crates/runtime/worker/acquisition-sdk",
+    "crates/runtime/worker/process-grant",
+    "crates/runtime/acquisition",
+    "crates/runtime/protocol",
+    "crates/runtime/contract",
+    "crates/runtime/kernel",
+    "crates/runtime/session",
+    "crates/runtime/targets/contract",
+    "crates/runtime/targets/process-host",
+    "crates/runtime/targets/runtime",
+    "crates/core/translation",
+    "crates/core/workflow",
+    "crates/product/ai-translation",
+    "test-support/reference-adapters",
+    "test-support/controller-plugin",
+    "test-support/isolated-worker",
+    "test-support/native-adapter",
+    "test-support/acquisition-worker",
+    "test-support/windows-host",
+    "test-support/windows-runtime-target",
+]
+exclude = [
+    "vendor/retour",
+    "vendor/yueli-distribution-sdk",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[patch.crates-io]
+retour = { path = "vendor/retour" }
+
+[patch."https://github.com/glyphshift/glyphshift.git"]
+glyphshift-adapter-sdk = { path = "crates/adapters/platform/sdk" }
+glyphshift-adapter-native-abi = { path = "crates/adapters/platform/native-abi" }
+glyphshift-domain = { path = "crates/core/domain" }

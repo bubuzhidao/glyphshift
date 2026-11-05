@@ -1,0 +1,192 @@
+#![cfg(windows)]
+
+use glyphshift_adapter_registry::{AdapterRequirement, AdapterVersion, AdapterVersionRequirement};
+use glyphshift_controller_host::{
+    ControllerLoadError, ControllerStartupConfig, ControllerTrustPolicy,
+    ProcessControllerTransport, VerifiedControllerArtifact, measure_code_hash,
+};
+use glyphshift_domain::{AdapterId, Feature};
+use glyphshift_extension::{
+    CodeHash, ControllerArtifactId, ControllerCodeIdentity, ControllerSignerId, ExtensionId,
+    ProtocolVersion,
+};
+use glyphshift_protocol::{
+    ControllerConnection, ControllerHealth, ControllerNonce, ControllerProtocolError,
+    ControllerRejection, NonceLedger, TransportFailure,
+};
+use std::path::PathBuf;
+use std::time::Duration;
+
+const SIGNER: &str = "test.controller.signer";
+const ADAPTER: &str = "example.synthetic.process-inline";
+
+fn controller_executable() -> PathBuf {
+    let executable = std::env::current_exe().expect("current test executable");
+    let profile = executable
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("Cargo profile directory");
+    profile.join("glyphshift-test-controller-plugin.exe")
+}
+
+fn identity(hash: CodeHash) -> ControllerCodeIdentity {
+    ControllerCodeIdentity::new(
+        ControllerArtifactId::new("controller.synthetic"),
+        ControllerSignerId::new(SIGNER),
+        hash,
+        ProtocolVersion::new(1, 0),
+    )
+}
+
+fn verified_artifact() -> VerifiedControllerArtifact {
+    let path = controller_executable();
+    let hash = measure_code_hash(&path).expect("measure controller artifact");
+    VerifiedControllerArtifact::verify(path, &identity(hash), &ControllerTrustPolicy::new([SIGNER]))
+        .expect("verify controller artifact")
+}
+
+fn requirement() -> AdapterRequirement {
+    AdapterRequirement::new(
+        AdapterId::new(ADAPTER),
+        AdapterVersionRequirement::Exact(AdapterVersion::new(1, 0, 0)),
+        [Feature::TextReplace, Feature::FontSubstitute],
+    )
+}
+
+fn connection() -> ControllerConnection<ProcessControllerTransport> {
+    let transport = ProcessControllerTransport::spawn_configured(
+        verified_artifact(),
+        Duration::from_secs(2),
+        ControllerStartupConfig::new(["SyntheticEditor.exe"], [requirement()])
+            .with_descendant_executable_names(["SyntheticRenderer.exe"]),
+    )
+    .expect("spawn configured controller");
+    ControllerConnection::connect(
+        transport,
+        ExtensionId::new("software.synthetic.process"),
+        ProtocolVersion::new(1, 0),
+        ControllerNonce::new([7; 32]),
+        &mut NonceLedger::new(),
+    )
+    .expect("connect controller")
+}
+
+#[test]
+fn ctl_process_001_verified_process_runs_inventory_launch_and_authorized_recipe() {
+    let mut connection = connection();
+    connection.authorize_capabilities([requirement()]);
+    let inventory = connection.inventory().expect("inventory");
+    assert_eq!(inventory.installations().len(), 1);
+    assert_eq!(inventory.targets().len(), 3);
+    let grant = connection
+        .authorize_worker_target(inventory.targets()[0].id())
+        .expect("authorized worker target grant");
+    assert_eq!(grant.platform(), "synthetic-process-v1");
+    assert_eq!(grant.payload(), "target:authorized");
+    connection
+        .control_runtime_diagnostics(inventory.targets()[0].id(), true)
+        .expect("enable diagnostics through the process transport");
+    let diagnostics = connection
+        .query_runtime_diagnostics(inventory.targets()[0].id())
+        .expect("query diagnostics through the process transport");
+    assert_eq!(diagnostics.records().len(), 1);
+    assert_eq!(diagnostics.records()[0].source_text(), "Open");
+    assert_eq!(diagnostics.dropped(), 2);
+    let observations = connection
+        .query_observations(inventory.targets()[0].id())
+        .expect("query observations through the process transport");
+    assert_eq!(observations.producer_id().as_str(), "synthetic-target");
+    assert_eq!(observations.generation(), 7);
+    assert_eq!(observations.dropped_total(), 3);
+    assert_eq!(observations.records()[0].sequence(), 11);
+    assert_eq!(observations.records()[0].source(), "Open");
+
+    let receipt = connection
+        .launch(inventory.installations()[0].id())
+        .expect("launch request");
+    assert_eq!(receipt.installation_id(), inventory.installations()[0].id());
+
+    let recipe = connection
+        .prepare(
+            inventory.targets()[0].id(),
+            [Feature::TextReplace, Feature::FontSubstitute],
+        )
+        .expect("prepare recipe");
+    assert_eq!(recipe.requirements().len(), 1);
+    assert_eq!(recipe.requirements()[0].adapter_id().as_str(), ADAPTER);
+    assert_eq!(connection.health(), ControllerHealth::Available);
+}
+
+#[test]
+fn ctl_process_002_rejects_untrusted_or_modified_artifacts_before_spawn() {
+    let path = controller_executable();
+    let observed = measure_code_hash(&path).expect("measure controller artifact");
+    assert!(matches!(
+        VerifiedControllerArtifact::verify(
+            path.clone(),
+            &identity(observed),
+            &ControllerTrustPolicy::new(["another.signer"]),
+        ),
+        Err(ControllerLoadError::UntrustedSigner)
+    ));
+    assert!(matches!(
+        VerifiedControllerArtifact::verify(
+            path,
+            &identity(CodeHash::new([0; 32])),
+            &ControllerTrustPolicy::new([SIGNER]),
+        ),
+        Err(ControllerLoadError::HashMismatch)
+    ));
+}
+
+#[test]
+fn ctl_process_003_one_controller_crash_degrades_only_its_connection() {
+    let mut crashing = connection();
+    crashing.authorize_capabilities([requirement()]);
+    let crash_inventory = crashing.inventory().expect("crash inventory");
+    assert_eq!(
+        crashing.prepare(crash_inventory.targets()[1].id(), [Feature::TextReplace],),
+        Err(ControllerProtocolError::Transport(
+            TransportFailure::Crashed
+        ))
+    );
+    assert_eq!(crashing.health(), ControllerHealth::Degraded);
+
+    let mut healthy = connection();
+    assert_eq!(
+        healthy
+            .inventory()
+            .expect("independent inventory")
+            .targets()
+            .len(),
+        3
+    );
+    assert_eq!(healthy.health(), ControllerHealth::Available);
+}
+
+#[test]
+fn ctl_process_004_preserves_a_controller_rejection_instead_of_calling_it_malformed() {
+    let mut connection = connection();
+    connection.authorize_capabilities([requirement()]);
+    let inventory = connection.inventory().expect("rejection inventory");
+
+    let error = connection
+        .prepare(inventory.targets()[2].id(), [Feature::TextReplace])
+        .expect_err("synthetic controller should reject activation");
+
+    assert_eq!(
+        error,
+        ControllerProtocolError::Transport(TransportFailure::Rejected(
+            ControllerRejection::RuntimeModuleUnavailable
+        ))
+    );
+    assert_eq!(connection.health(), ControllerHealth::Available);
+    assert_eq!(
+        connection
+            .inventory()
+            .expect("controller remains usable after a target rejection")
+            .targets()
+            .len(),
+        3
+    );
+}

@@ -1,0 +1,23 @@
+[package]
+name = "glyphshift-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+glyphshift-adapter-registry = { path = "../../crates/adapters/platform/registry" }
+glyphshift-domain = { path = "../../crates/core/domain" }
+glyphshift-extension = { path = "../../crates/core/extension" }
+glyphshift-protocol = { path = "../../crates/runtime/protocol" }
+glyphshift-runtime-contract = { path = "../../crates/runtime/contract" }
+glyphshift-session = { path = "../../crates/runtime/session" }
+
+[dev-dependencies]
+glyphshift-adapter-sdk = { path = "../../crates/adapters/platform/sdk" }
+glyphshift-reference-adapters = { path = "../../test-support/reference-adapters" }
+glyphshift-runtime-kernel = { path = "../../crates/runtime/kernel" }
+glyphshift-translation = { path = "../../crates/core/translation" }
+
+[lints]
+workspace = true

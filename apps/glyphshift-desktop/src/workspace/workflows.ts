@@ -1,0 +1,346 @@
+import { markLibraryUsed } from '../useLibrarySort'
+import { computed } from 'vue'
+import { workflowOperations } from '../workflowLifecycle'
+import { invoke } from '@tauri-apps/api/core'
+import { presentationError } from '../commandError'
+import { i18n } from '../i18n'
+import type {
+  DesktopSnapshot,
+  WorkflowCommandResult,
+  WorkflowDetail,
+  WorkflowRuntimeStatus,
+  WorkflowTarget,
+} from '../model'
+import {
+  applyDesktopSnapshot,
+  applyWorkflowRuntime,
+  clone,
+  errorMessage,
+  fontRefreshing,
+  hasDesktopRuntime,
+  lastWorkflowRefreshAt,
+  model,
+  refreshing,
+  setMessage,
+  workflowDetail,
+  workspaceBusy,
+} from './state'
+
+let refreshRequest: Promise<boolean> | undefined
+let refreshingWithRetry = false
+const commands = new Map<string, Promise<boolean>>()
+
+export function useWorkflowWorkspace() {
+  const activationIds = computed(() => new Set(model.value.activations.map(item => item.workflowId)))
+
+  function applyWorkflowResult(result: WorkflowCommandResult) {
+    if (!applyWorkflowRuntime(result.runtime)) return
+    const activation = model.value.activations.filter(item => item.workflowId !== result.activation.workflowId)
+    if (result.activation.enabled) activation.push({
+      workflowId: result.activation.workflowId,
+      revision: result.definition.revision,
+    })
+    model.value.activations = activation.sort((left, right) => left.workflowId.localeCompare(right.workflowId))
+    model.value.workflowRuntimeStatus = {
+      ...model.value.workflowRuntimeStatus,
+      [result.runtime.workflowId]: result.runtime,
+    }
+  }
+
+  function setWorkflowEnabled(id: string, enabled: boolean, replaceConflicts = false): Promise<boolean> {
+    if (!enabled) window.dispatchEvent(new CustomEvent('glyphshift:workflow-stop', { detail: id }))
+    const previous = commands.get(id) ?? Promise.resolve(true)
+    const next = previous.then(() => executeWorkflowCommand(id, enabled, replaceConflicts))
+    commands.set(id, next)
+    void next.finally(() => { if (commands.get(id) === next) commands.delete(id) })
+    return next
+  }
+  async function executeWorkflowCommand(id: string, enabled: boolean, replaceConflicts: boolean) {
+    workflowOperations.value[id] = enabled ? 'connecting' : 'stopping'
+    setMessage(id, '')
+    try {
+      if (hasDesktopRuntime()) {
+        const command = enabled ? 'desktop_enable_workflow' : 'desktop_disable_workflow'
+        const args = enabled ? { workflowId: id, replaceConflicts } : { workflowId: id }
+        applyWorkflowResult(await invoke<WorkflowCommandResult>(command, args))
+        if (replaceConflicts) applyDesktopSnapshot(await invoke<DesktopSnapshot>('desktop_snapshot'))
+      }
+      else {
+        const workflow = model.value.workflows.find(item => item.id === id)
+        if (!workflow) return false
+        const activations = model.value.activations.filter(item => item.workflowId !== id)
+        if (enabled) activations.push({ workflowId: id, revision: workflow.revision })
+        model.value.activations = activations
+        model.value.workflowRuntimeStatus[id] = {
+          workflowId: id,
+          errors: {},
+          targets: workflow.targets.map(target => ({
+            softwareId: target.softwareId,
+            discovered: false,
+            active: false,
+            translationRequested: enabled && target.dictionaryIds.length > 0,
+            fontRequested: enabled && Boolean(target.fontPolicy),
+            translationActive: false,
+            fontActive: false,
+            appliedGeneration: null,
+          })),
+        }
+      }
+      if (enabled) {
+        markLibraryUsed('workflows', id)
+        for (const target of model.value.workflows.find(item => item.id === id)?.targets ?? []) {
+          for (const dictionaryId of target.dictionaryIds) markLibraryUsed('dictionaries', dictionaryId)
+        }
+      }
+      return true
+    }
+    catch (error) {
+      setMessage(id, errorMessage(error))
+      workflowOperations.value[id] = 'unknown'
+      return false
+    }
+    finally {
+      if (workflowOperations.value[id] !== 'unknown') delete workflowOperations.value[id]
+    }
+  }
+
+  function refreshWorkflows(retry = true, visible = true): Promise<boolean> {
+    if (refreshRequest) {
+      if (retry && !refreshingWithRetry) return refreshRequest.then(() => refreshWorkflows(true, visible))
+      return refreshRequest
+    }
+    refreshingWithRetry = retry
+    refreshRequest = performRefresh(retry, visible).finally(() => { refreshRequest = undefined })
+    return refreshRequest
+  }
+  async function performRefresh(retry: boolean, visible: boolean) {
+    if (visible) refreshing.value = true
+    try {
+      if (hasDesktopRuntime()) applyDesktopSnapshot(await invoke<DesktopSnapshot>('desktop_refresh_workflows', { retry }))
+      setMessage('workflows', '')
+      for (const id of Object.keys(workflowOperations.value)) if (workflowOperations.value[id] === 'unknown') delete workflowOperations.value[id]
+      return true
+    }
+    catch (error) {
+      setMessage('workflows', errorMessage(error))
+      for (const item of model.value.workflows) if (!workflowOperations.value[item.id]) workflowOperations.value[item.id] = 'unknown'
+      return false
+    }
+    finally {
+      lastWorkflowRefreshAt.value = Date.now()
+      if (visible) refreshing.value = false
+    }
+  }
+
+  async function setWorkflowCollection(id: string, enabled: boolean) {
+    try {
+      if (hasDesktopRuntime()) applyDesktopSnapshot(await invoke<DesktopSnapshot>('desktop_set_workflow_collection', { workflowId: id, enabled }))
+      else {
+        const workflow = model.value.workflows.find(item => item.id === id)
+        workflow?.targets.forEach(target => { target.collectNewSources = enabled })
+      }
+      return true
+    } catch (error) { setMessage(id, errorMessage(error)); return false }
+  }
+
+  async function refreshFontFamilies() {
+    if (fontRefreshing.value) return false
+    fontRefreshing.value = true
+    setMessage('workflows', '')
+    try {
+      if (hasDesktopRuntime()) {
+        applyDesktopSnapshot(await invoke<DesktopSnapshot>('desktop_refresh_font_families'))
+      }
+      return true
+    }
+    catch (error) {
+      setMessage('workflows', errorMessage(error))
+      return false
+    }
+    finally {
+      fontRefreshing.value = false
+    }
+  }
+
+  async function loadWorkflow(id: string) {
+    try {
+      workflowDetail.value = hasDesktopRuntime()
+        ? await invoke<WorkflowDetail>('desktop_workflow', { workflowId: id })
+        : model.value.workflowDetails[id] ?? null
+      return workflowDetail.value
+    }
+    catch (error) {
+      setMessage(id, errorMessage(error))
+      return null
+    }
+  }
+
+  async function saveWorkflow(detail: WorkflowDetail) {
+    workspaceBusy.value = true
+    try {
+      const snapshot = hasDesktopRuntime()
+        ? await invoke<DesktopSnapshot>('desktop_update_workflow', { edit: {
+            id: detail.id,
+            name: detail.name,
+            description: detail.description,
+            globalShortcut: detail.globalShortcut ?? '',
+            baseRevision: detail.revision,
+            targets: detail.targets,
+          } })
+        : localSaveWorkflow(detail)
+      applyDesktopSnapshot(snapshot)
+      await loadWorkflow(detail.id)
+      return true
+    }
+    catch (error) {
+      setMessage(detail.id, errorMessage(error))
+      return false
+    }
+    finally {
+      workspaceBusy.value = false
+    }
+  }
+
+  async function createWorkflow(name: string, description: string, targets: WorkflowTarget[], globalShortcut = '') {
+    if (workspaceBusy.value) return false
+    workspaceBusy.value = true
+    setMessage('workflows', '')
+    const id = `workflow-${crypto.randomUUID()}`
+    try {
+      const snapshot = hasDesktopRuntime()
+        ? await invoke<DesktopSnapshot>('desktop_create_workflow', { create: { id, name, description, targets, globalShortcut } })
+        : localCreateWorkflow({ id, name, description, revision: 1, targets, globalShortcut })
+      applyDesktopSnapshot(snapshot)
+      return id
+    }
+    catch (error) {
+      setMessage('workflows', errorMessage(error))
+      return false
+    }
+    finally {
+      workspaceBusy.value = false
+    }
+  }
+
+  function localCreateWorkflow(detail: WorkflowDetail): DesktopSnapshot {
+    model.value.workflowDetails[detail.id] = detail
+    model.value.workflows = [...model.value.workflows, {
+      ...detail,
+      softwareIds: detail.targets.map(target => target.softwareId),
+      dictionaryIds: [...new Set(detail.targets.flatMap(target => target.dictionaryIds))].sort(),
+      targets: clone(detail.targets),
+    }].sort((left, right) => left.id.localeCompare(right.id))
+    model.value.workflowRuntimeStatus[detail.id] = {
+      workflowId: detail.id,
+      targets: detail.targets.map(target => ({
+        softwareId: target.softwareId,
+        discovered: false,
+        active: false,
+        translationRequested: false,
+        fontRequested: false,
+        translationActive: false,
+        fontActive: false,
+        appliedGeneration: null,
+      })),
+      errors: {},
+    }
+    return model.value
+  }
+
+  async function copyWorkflow(sourceId: string) {
+    if (workspaceBusy.value) return false
+    const source = model.value.workflows.find(item => item.id === sourceId)
+    if (!source) return false
+    workspaceBusy.value = true
+    setMessage('workflows', '')
+    const id = `workflow-${crypto.randomUUID()}`
+    const name = `${source.name} ${i18n.global.t('workspace.copySuffix')}`
+    try {
+      const snapshot = hasDesktopRuntime()
+        ? await invoke<DesktopSnapshot>('desktop_copy_workflow', { sourceWorkflowId: sourceId, newWorkflowId: id, name })
+        : localCopyWorkflow(sourceId, id, name)
+      applyDesktopSnapshot(snapshot)
+      return true
+    }
+    catch (error) {
+      setMessage('workflows', errorMessage(error))
+      return false
+    }
+    finally {
+      workspaceBusy.value = false
+    }
+  }
+
+  function localCopyWorkflow(sourceId: string, id: string, name: string): DesktopSnapshot {
+    const source = model.value.workflowDetails[sourceId]
+    if (!source) throw presentationError(i18n.global.t('workspace.missingCopySource'))
+    return localCreateWorkflow({ ...clone(source), id, name, revision: 1, globalShortcut: '' })
+  }
+
+  async function removeWorkflows(ids: string[]) {
+    if (workspaceBusy.value || !ids.length) return false
+    workspaceBusy.value = true
+    setMessage('workflows', '')
+    try {
+      if (hasDesktopRuntime()) {
+        applyDesktopSnapshot(await invoke<DesktopSnapshot>('desktop_delete_workflows', { workflowIds: ids }))
+      }
+      else {
+        const enabled = new Set(model.value.activations.map(item => item.workflowId))
+        if (ids.some(id => enabled.has(id))) throw presentationError(i18n.global.t('workspace.disableBeforeDelete'))
+        const removed = new Set(ids)
+        model.value.workflows = model.value.workflows.filter(item => !removed.has(item.id))
+        for (const id of ids) {
+          delete model.value.workflowDetails[id]
+          delete model.value.workflowRuntimeStatus[id]
+        }
+      }
+      return true
+    }
+    catch (error) {
+      setMessage('workflows', errorMessage(error))
+      return false
+    }
+    finally {
+      workspaceBusy.value = false
+    }
+  }
+
+  async function setWorkflowsEnabled(ids: string[], enabled: boolean) {
+    let succeeded = true
+    for (const id of ids) if (!await setWorkflowEnabled(id, enabled)) succeeded = false
+    return succeeded
+  }
+
+  function localSaveWorkflow(detail: WorkflowDetail): DesktopSnapshot {
+    const next = { ...clone(detail), revision: detail.revision + 1 }
+    model.value.workflowDetails[next.id] = next
+    model.value.workflows = model.value.workflows.map(item => item.id === next.id ? {
+      ...next,
+      softwareIds: next.targets.map(target => target.softwareId),
+      dictionaryIds: [...new Set(next.targets.flatMap(target => target.dictionaryIds))].sort(),
+    } : item)
+    return model.value
+  }
+
+  function runtimeStatus(id: string): WorkflowRuntimeStatus | undefined {
+    return model.value.workflowRuntimeStatus[id]
+  }
+
+  return {
+    applyWorkflowResult,
+    activationIds,
+    lastWorkflowRefreshAt,
+    setWorkflowEnabled,
+    setWorkflowCollection,
+    refreshWorkflows,
+    refreshFontFamilies,
+    loadWorkflow,
+    createWorkflow,
+    copyWorkflow,
+    removeWorkflows,
+    setWorkflowsEnabled,
+    saveWorkflow,
+    runtimeStatus,
+  }
+}

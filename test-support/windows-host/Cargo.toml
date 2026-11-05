@@ -1,0 +1,40 @@
+[package]
+name = "glyphshift-windows-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+glyphshift-adapter-gdi = { git = "https://github.com/glyphshift/adapter-win32-text.git", rev = "506b61c080f854e9edbe46b3e0991107a3e98d3b" }
+glyphshift-adapter-gdiplus = { git = "https://github.com/glyphshift/adapter-gdiplus.git", rev = "ca85012ef41a6e4d7c79a0c065167a5c9a16290e" }
+glyphshift-adapter-sdk = { path = "../../crates/adapters/platform/sdk" }
+glyphshift-domain = { path = "../../crates/core/domain" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_GdiPlus",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Foundation_Numerics",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_System_Com",
+]
+
+[lints.rust]
+unsafe_code = "allow"
