@@ -287,22 +287,17 @@ impl DesktopApplication {
         if preview_adapter_ids.is_empty() {
             return Err(CommandError::new("capture.preview_unavailable"));
         }
-        let batch = locations
-            .iter()
-            .flat_map(|location| {
-                let adapter_ids = preview_adapter_ids.clone();
-                entries.iter().map(move |entry| {
-                    (
-                        location.clone(),
-                        entry.source(),
-                        entry.translation(),
-                        adapter_ids.clone(),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        let snapshot = TranslationSnapshot::empty(Generation::new(generation))
-            .with_entries_for_adapters_batch(batch);
+        let mut snapshot = TranslationSnapshot::empty(Generation::new(generation));
+        for location in locations {
+            for entry in &entries {
+                snapshot = snapshot.with_entry_for_adapters(
+                    location.clone(),
+                    entry.source(),
+                    entry.translation(),
+                    preview_adapter_ids.iter().cloned(),
+                );
+            }
+        }
         let publication = RuntimePublication::new(
             spec.publication().route().clone(),
             snapshot,

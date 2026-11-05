@@ -316,30 +316,25 @@ impl RuntimePublication {
             RouteLimits::new(wire.route.max_state_entries, wire.route.max_steps),
         );
         let mut snapshot = TranslationSnapshot::empty(Generation::new(wire.generation));
-        let mut translations = Vec::new();
-        let mut contextual_translations = Vec::new();
         for entry in wire.translations {
-            match (entry.context_kind, entry.context_key) {
-                (None, None) => translations.push((
+            snapshot = match (entry.context_kind, entry.context_key) {
+                (None, None) => snapshot.with_entry_for_adapters(
                     entry.location,
                     entry.source,
                     entry.translation,
                     entry.adapter_ids,
-                )),
-                (Some(kind), Some(key)) => contextual_translations.push((
+                ),
+                (Some(kind), Some(key)) => snapshot.with_context_entry_for_adapters(
                     entry.location,
                     kind,
                     key,
                     entry.source,
                     entry.translation,
                     entry.adapter_ids,
-                )),
+                ),
                 _ => return Err(RuntimeWireError::InvalidJson),
-            }
+            };
         }
-        snapshot = snapshot
-            .with_entries_for_adapters_batch(translations)
-            .with_context_entries_for_adapters_batch(contextual_translations);
         for (id, rules) in wire.dictionary_rules {
             snapshot = snapshot.with_dictionary_rules(
                 id,

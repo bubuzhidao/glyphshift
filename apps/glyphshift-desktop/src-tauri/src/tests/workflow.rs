@@ -1486,7 +1486,6 @@ fn collection_filters_before_dictionary_write_and_rechecks_changed_policy() {
         "Debug text",
         "Selected:0",
         "Open menu",
-        "既有数字",
     ] {
         sink.observe(TEST_ADAPTER_ID, source);
     }

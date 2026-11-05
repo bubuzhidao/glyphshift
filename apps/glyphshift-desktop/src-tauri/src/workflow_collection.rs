@@ -150,7 +150,6 @@ impl DesktopApplication {
             .configure(&self.collection_filter_policy)
             .map_err(crate::ai::ai_plan_error)?;
         sources.retain(|source| !self.collection_filter.hidden(source));
-        sources.retain(|source| !resolver.is_translation(source));
         if !sources.is_empty() {
             let dictionary = self
                 .backend

@@ -1,15 +1,11 @@
 use glyphshift_capture::{ProbeEntryResolution, ProbeEntryRow, ProbeEntryState, ProbeRunSummary};
 use glyphshift_desktop_backend::DesktopBackend;
 use glyphshift_translation::RegexTranslationRules;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, sync::Arc};
 
 /// A read projection across the workflow's dictionaries. It never changes dictionary ownership.
 pub(super) struct EntryResolver {
     entries: BTreeMap<String, Vec<(Box<str>, Box<str>)>>,
-    translations: BTreeSet<String>,
     writer: Box<str>,
     rules: Vec<(Box<str>, RegexTranslationRules)>,
 }
@@ -32,7 +28,6 @@ impl EntryResolver {
                     .collect()
             });
         let mut entries: BTreeMap<String, Vec<(Box<str>, Box<str>)>> = BTreeMap::new();
-        let mut translations = BTreeSet::new();
         let mut rules = Vec::new();
         for id in ids {
             if let Ok(dictionary) = backend.dictionary(&id) {
@@ -42,10 +37,6 @@ impl EntryResolver {
                         .expect("validated rules"),
                 ));
                 for entry in dictionary.entries() {
-                    let translation = entry.translation().trim();
-                    if !translation.is_empty() {
-                        translations.insert(translation.to_owned());
-                    }
                     entries
                         .entry(entry.source().to_owned())
                         .or_default()
@@ -55,14 +46,9 @@ impl EntryResolver {
         }
         Self {
             entries,
-            translations,
             writer: summary.dictionary_id().into(),
             rules,
         }
-    }
-
-    pub(super) fn is_translation(&self, source: &str) -> bool {
-        self.translations.contains(source.trim())
     }
 
     pub(super) fn collection_sources(&self, source: &str) -> Vec<Box<str>> {

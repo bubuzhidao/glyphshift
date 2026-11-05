@@ -1,0 +1,117 @@
+{
+    "schema":  "glyphshift.dictionary/3",
+    "metadata":  {
+                     "authors":  [
+
+                                 ],
+                     "description":  "",
+                     "fontFamilies":  [
+
+                                      ],
+                     "fontScalePercent":  null,
+                     "homepage":  null,
+                     "id":  "dictionary-54e0c69a-c701-4659-88d8-ed9fccaff1ca",
+                     "license":  null,
+                     "name":  "X2 字典 (AD主页裁剪)",
+                     "releaseVersion":  "0.1.0",
+                     "sourceLocale":  "en-US",
+                     "tags":  [
+
+                              ],
+                     "targetLocale":  "zh-CN",
+                     "textRules":  [
+
+                                   ]
+                 },
+    "revision":  1,
+    "entries":  [
+                    {
+                        "source":  "Class",
+                        "translation":  "类"
+                    },
+                    {
+                        "source":  "Date",
+                        "translation":  "日期"
+                    },
+                    {
+                        "source":  "Document",
+                        "translation":  "文档"
+                    },
+                    {
+                        "source":  "Home Page",
+                        "translation":  "主页"
+                    },
+                    {
+                        "source":  "Home Page - Altium Designer Enterprise (25.4.2)",
+                        "translation":  "主页 - Altium Designer Enterprise (25.4.2)"
+                    },
+                    {
+                        "source":  "Message",
+                        "translation":  "消息"
+                    },
+                    {
+                        "source":  "Messages",
+                        "translation":  "消息"
+                    },
+                    {
+                        "source":  "N...",
+                        "translation":  "N..."
+                    },
+                    {
+                        "source":  "No.",
+                        "translation":  "编号"
+                    },
+                    {
+                        "source":  "Not Signed In",
+                        "translation":  "未登录"
+                    },
+                    {
+                        "source":  "Panels",
+                        "translation":  "面板"
+                    },
+                    {
+                        "source":  "Project Group 1.DsnWrk",
+                        "translation":  "项目组 1.DsnWrk"
+                    },
+                    {
+                        "source":  "Projects",
+                        "translation":  "项目"
+                    },
+                    {
+                        "source":  "Search",
+                        "translation":  "搜索"
+                    },
+                    {
+                        "source":  "Source",
+                        "translation":  "源"
+                    },
+                    {
+                        "source":  "Time",
+                        "translation":  "时间"
+                    },
+                    {
+                        "source":  "帮助 (\u0026H)",
+                        "translation":  "帮助 (\u0026H)"
+                    },
+                    {
+                        "source":  "文件 (\u0026F)",
+                        "translation":  "文件 (\u0026F)"
+                    },
+                    {
+                        "source":  "窗口 (\u0026W)",
+                        "translation":  "窗口 (\u0026W)"
+                    },
+                    {
+                        "source":  "视图 (\u0026V)",
+                        "translation":  "视图 (\u0026V)"
+                    },
+                    {
+                        "source":  "项目 (\u0026C)",
+                        "translation":  "项目 (\u0026C)"
+                    },
+                    {
+                        "source":  "Navigator",
+                        "translation":  "导航器"
+                    }
+                ]
+}
